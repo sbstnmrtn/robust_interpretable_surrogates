@@ -1,5 +1,6 @@
 import numpy as np
 import copy
+import time
 
 epsilon_glob = 0.001
 
@@ -71,13 +72,27 @@ class Tree:
     def reset_nom(self):
         self.nom_obj = None
 
-    def pre_adv(self, costs, budget):
+    def calc_scheduling_objective(self, cost_vector, solution):
+        """calculate the objective value for a given combination of cost vector and solution"""
+        (no_machines, no_jobs) = solution.shape
+        machines, jobs = range(no_machines), range(no_jobs)
+        obj_machines = []
+        for machine in machines:
+            obj_machines.append(sum(solution[machine, job] * cost_vector[job] for job in jobs))
+        objective = max(obj_machines)
+        return objective
+
+    def pre_adv(self, costs, budget, scheduling=False):
         """preprocessing for adversary problem"""
         scenarios = range(len(costs))
         edges = range(len(costs[0]))
-        d = np.zeros((len(costs), self.depth * 2))
-        p = np.zeros((len(costs), self.depth * 2))
+        d = np.zeros((len(costs), self.depth * 2))  # costs of combination of solution and scenario
+        p = np.zeros((len(costs), self.depth * 2))  # price of shifting a scenario into a specific leaf
         obs_list = [copy.deepcopy(costs), copy.deepcopy(costs), copy.deepcopy(costs), copy.deepcopy(costs)]
+        if budget == 0.0:
+            upper_bound_p = 1.0
+        else:
+            upper_bound_p = budget * 2
         self.true_assignment = []
 
         if self.t1 is None or self.t2 is None or self.t3 is None:
@@ -86,11 +101,17 @@ class Tree:
         temp_array = np.zeros(6)
         for scenario in scenarios:
             # calc delta
-            for edge in edges:
-                d[scenario][0] = round(d[scenario][0] + self.s1[edge] * costs[scenario][edge], 5)
-                d[scenario][1] = round(d[scenario][1] + self.s2[edge] * costs[scenario][edge], 5)
-                d[scenario][2] = round(d[scenario][2] + self.s3[edge] * costs[scenario][edge], 5)
-                d[scenario][3] = round(d[scenario][3] + self.s4[edge] * costs[scenario][edge], 5)
+            if not scheduling:
+                for edge in edges:
+                    d[scenario][0] = round(d[scenario][0] + self.s1[edge] * costs[scenario][edge], 5)
+                    d[scenario][1] = round(d[scenario][1] + self.s2[edge] * costs[scenario][edge], 5)
+                    d[scenario][2] = round(d[scenario][2] + self.s3[edge] * costs[scenario][edge], 5)
+                    d[scenario][3] = round(d[scenario][3] + self.s4[edge] * costs[scenario][edge], 5)
+            else:
+                d[scenario][0] = self.calc_scheduling_objective(costs[scenario], self.s1)
+                d[scenario][1] = self.calc_scheduling_objective(costs[scenario], self.s2)
+                d[scenario][2] = self.calc_scheduling_objective(costs[scenario], self.s3)
+                d[scenario][3] = self.calc_scheduling_objective(costs[scenario], self.s4)
 
             # calc p
             # check queries
@@ -119,21 +140,16 @@ class Tree:
                 temp_array[4] = round(costs[scenario][self.f3] - self.t3 + epsilon_glob, 5)
                 temp_array[5] = 0
 
-            for element in temp_array:  # DEL
-                integer_part, fractional_part = str(element).split('.')
-                if len(fractional_part) > 6:
-                    pass
-
             # calc p values
             if self.f1 == self.f2:
                 p[scenario][0] = max(abs(temp_array[0]), abs(temp_array[2]))
                 obs_list[0][scenario][self.f1] = round(obs_list[0][scenario][self.f1] - p[scenario][0], 5)
                 if self.t2 > self.t1:
-                    p[scenario][1] = round(budget * 2, 5)
+                    p[scenario][1] = round(upper_bound_p, 5)
                 else:
                     if q1 and q2:
                         if self.t1 - 0.000001 <= self.t2 <= self.t1 + 0.000001:
-                            p[scenario][1] = round(budget * 2, 5)
+                            p[scenario][1] = round(upper_bound_p, 5)
                         else:
                             p[scenario][1] = abs(temp_array[3])
                             obs_list[1][scenario][self.f1] = round(obs_list[1][scenario][self.f1] + temp_array[3], 5)
@@ -141,7 +157,7 @@ class Tree:
                         p[scenario][1] = 0
                     if not q1 and not q2:
                         if self.t1 - 0.000001 <= self.t2 <= self.t1 + 0.000001:
-                            p[scenario][1] = round(budget * 2, 5)
+                            p[scenario][1] = round(upper_bound_p, 5)
                         else:
                             p[scenario][1] = abs(temp_array[0])
                             obs_list[1][scenario][self.f1] = round(obs_list[1][scenario][self.f1] - temp_array[0], 5)
@@ -156,19 +172,19 @@ class Tree:
                 p[scenario][3] = max(abs(temp_array[1]), abs(temp_array[5]))
                 obs_list[3][scenario][self.f1] = round(obs_list[3][scenario][self.f1] + p[scenario][3], 5)
                 if self.t1 > self.t3:
-                    p[scenario][2] = round(budget * 2, 5)
+                    p[scenario][2] = round(upper_bound_p, 5)
                 else:
                     if not q1 and q3:
                         p[scenario][2] = 0
                     if q1 and q3:
                         if self.t1 - 0.000001 <= self.t3 <= self.t1 + 0.000001:
-                            p[scenario][2] = round(budget * 2, 5)
+                            p[scenario][2] = round(upper_bound_p, 5)
                         else:
                             p[scenario][2] = abs(temp_array[1])
                             obs_list[2][scenario][self.f1] = round(obs_list[2][scenario][self.f1] + temp_array[1], 5)
                     if not q1 and not q3:
                         if self.t1 - 0.000001 <= self.t3 <= self.t1 + 0.000001:
-                            p[scenario][2] = round(budget * 2, 5)
+                            p[scenario][2] = round(upper_bound_p, 5)
                         else:
                             p[scenario][2] = abs(temp_array[4])
                             obs_list[2][scenario][self.f1] = round(obs_list[2][scenario][self.f1] - temp_array[4], 5)
@@ -243,11 +259,11 @@ class Tree:
 
 
 class Data:
-    def __init__(self, seed, grid_size, no_train, costs_tr, costs_te, mapping, budget, budget_type, param_budget,
+    def __init__(self, seed, instance_size, no_train, costs_tr, costs_te, mapping, budget, budget_type, param_budget,
                  graph, dict_e, dict_c, s, t, method, time_limit, time_limit2):
         """Contains Data for one instance and one method."""
         self.seed = seed
-        self.grid_size = grid_size
+        self.instance_size = instance_size
         self.no_train = no_train
         self.costs = costs_tr
         self.costs_test = costs_te
@@ -271,18 +287,22 @@ class Data:
         self.tree_rob = None
         self.best_rob_obj = 10 ** 8
         self.rob_objs = []
+        self.tree_rob_theta = None
+        self.best_rob_obj_theta = 10 ** 8
         self.tree_last = None
         self.one_sol = None
 
         # time related things
-        self.t_lim = time_limit
-        self.t_lim2 = time_limit2
-        self.time_left = time_limit
         self.time_mp = []
         self.time_opt_thrshlds = []
         self.time_ad = []
         self.rtime = 0
         self.warmstarttime = 0
+        self.tl_all = time_limit
+        self.tl_grb = time_limit2
+        self.start_time = time.time()
+        self.end_time = None
+        self.time_vs_obj = []
 
         # misc
         self.iteration = 0
@@ -292,9 +312,18 @@ class Data:
         self.last_assgn_sols = []
         self.org_dict_c = copy.deepcopy(dict_c)
         self.marker_opt_thrshld = False
-        self.warm_start_id = int(str(seed)+str(grid_size)+str(no_train)+str(int(param_budget*1000))+str(time_limit))
-        self.counter_int_iteration = 0  # alt
-        self.counter_ext_iteration = 0  # alt
+        dict_methods = {"nom": 0, "one": 1, "o": 2, "s": 3, "t": 4, "a": 5}
+        dict_budget_type = {"l": 0, "g": 1}
+        if type(instance_size) == tuple:
+            self.warm_start_id = int(str(seed) + str(instance_size[0]) + str(instance_size[1]) + str(no_train)
+                                     + str(int(param_budget * 1000)) + str(time_limit) + str(dict_methods[method])
+                                     + str(dict_budget_type[budget_type]))
+        else:
+            self.warm_start_id = int(str(seed)+str(instance_size)+str(no_train)+str(int(param_budget*1000))
+                                     +str(time_limit)+str(dict_methods[method])+str(dict_budget_type[budget_type]))
+        self.counter_int_iteration = 0
+        self.counter_ext_iteration = 0
+        self.list_time_obj = []
 
     def add_tree(self, tree):
         if self.iteration == 0:
@@ -345,4 +374,10 @@ class Data:
         self.iteration = 1
         self.mapping = copy.deepcopy(self.start_mapping)
         self.dict_c = copy.deepcopy(self.org_dict_c)
+
+    def return_best_rob(self):
+        if self.rob_objs:
+            return min(min(self.rob_objs), self.best_rob_obj_theta)
+        else:
+            return self.best_rob_obj_theta
 
